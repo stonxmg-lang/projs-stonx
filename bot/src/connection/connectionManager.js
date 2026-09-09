@@ -57,6 +57,7 @@ class ConnectionManager {
     this.saveCreds = null;
     this._authMethodChoice = null; // cached so reconnects don't re-prompt
     this._shuttingDown = false;
+    this._paused = false;
 
     // Values the local control API (src/api/server.js) reads and writes.
     this.latestQr = null;
@@ -120,6 +121,30 @@ class ConnectionManager {
     this.state = config.CONNECTION_STATE.LOGGED_OUT;
     events.emit('connection.state', this.state);
     if (!this._shuttingDown) await this._connect();
+  }
+
+  /**
+   * Pause: disconnect from WhatsApp but KEEP the session files on disk, so a
+   * later resume() reconnects on the same account without re-pairing. Unlike
+   * requestLogout(), this does NOT clear the session and does NOT auto-
+   * reconnect — it stays paused until the user resumes.
+   */
+  async pauseBot() {
+    logger.info('Bot paused via local API (session kept)');
+    this._paused = true;
+    this.reconnectScheduler.cancel();
+    this._unbindSocket(this.sock);
+    this.sock = null;
+    this.state = config.CONNECTION_STATE.PAUSED;
+    events.emit('connection.state', this.state);
+  }
+
+  /** Resume from a paused state — reconnect using the kept session. */
+  async resumeBot() {
+    if (!this._paused) return;
+    logger.info('Bot resumed via local API');
+    this._paused = false;
+    await this._connect();
   }
 
   getSock() {
@@ -310,7 +335,7 @@ class ConnectionManager {
       this._unbindSocket(this.sock);
       this.state = config.CONNECTION_STATE.RECONNECTING;
 
-      if (!this._shuttingDown) {
+      if (!this._shuttingDown && !this._paused) {
         this.reconnectScheduler.schedule(() => {
           console.log('⏳ Reconnecting...');
           this._connect()

@@ -1,7 +1,5 @@
 package com.stonx.bot;
 
-import android.animation.Animator;
-import android.animation.ObjectAnimator;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.NotificationChannel;
@@ -16,6 +14,8 @@ import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
+import android.graphics.LinearGradient;
+import android.graphics.Shader;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
@@ -27,9 +27,11 @@ import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.inputmethod.EditorInfo;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -45,25 +47,26 @@ public class MainActivity extends Activity {
     private static final int NOTIF_ID = 1;
     private static final int POLL_INTERVAL_MS = 2000;
 
-    // Palette — dark "professional" tech gradient.
-    private static final int C_BG_TOP = 0xFF0B1220;
-    private static final int C_BG_BOTTOM = 0xFF1B1035;
-    private static final int C_ACCENT = 0xFF7B5CFA;
-    private static final int C_ACCENT_2 = 0xFF39C6E8;
-    private static final int C_CARD = 0xCC141B2E;
-    private static final int C_TEXT = 0xFFF2F3F7;
-    private static final int C_TEXT_DIM = 0xFF9AA3B5;
-    private static final int C_OK = 0xFF33D17A;
-    private static final int C_WARN = 0xFFF5C247;
-    private static final int C_BAD = 0xFFEF5A6F;
+    // ---- Professional green / blue / white / black palette ----
+    private static final int C_BG_TOP    = 0xFF06131A; // near-black teal
+    private static final int C_BG_BOTTOM = 0xFF0A1F2B; // deep blue-green
+    private static final int C_CARD      = 0xF2101E28; // dark slate card
+    private static final int C_CARD_LINE = 0x1AFFFFFF; // subtle border
+    private static final int C_BLUE      = 0xFF2EA6FF; // accent blue
+    private static final int C_GREEN     = 0xFF25D9A4; // accent green
+    private static final int C_RED       = 0xFFEF5A6F; // danger
+    private static final int C_AMBER     = 0xFFF5C247; // warn
+    private static final int C_TEXT      = 0xFFF3F7F9; // white text
+    private static final int C_TEXT_DIM  = 0xFF8CA0AD; // muted
+    private static final int C_FIELD_BG  = 0x14FFFFFF; // input background
+    private static final int C_LOG_BG    = 0xFF040D12; // console black
+    private static final int C_LOG_TEXT  = 0xFF6FE3C0; // console green
 
     private final Handler handler = new Handler(Looper.getMainLooper());
 
     private FrameLayout screenContainer;
     private LinearLayout root;
-    private View card;
 
-    // Monitor panel widgets
     private View statusDot;
     private TextView statusText;
     private TextView logText;
@@ -71,7 +74,11 @@ public class MainActivity extends Activity {
 
     private String currentScreenKind = "";
     private String lastNotifiedState = "";
-    private String pendingCountryCode = "+968";
+    private String pendingCountryCode = "968";
+
+    // When true, user is at the bottom of the log so we keep autoscrolling;
+    // once they scroll up we stop yanking it back down (fixes the "jumpy" log).
+    private boolean logStickToBottom = true;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -81,6 +88,12 @@ public class MainActivity extends Activity {
         requestNotificationPermissionIfNeeded();
         startNodeService();
         handler.post(pollLoop);
+    }
+
+    @Override
+    protected void onDestroy() {
+        handler.removeCallbacks(pollLoop);
+        super.onDestroy();
     }
 
     private void startNodeService() {
@@ -93,16 +106,8 @@ public class MainActivity extends Activity {
     }
 
     @Override
-    protected void onDestroy() {
-        handler.removeCallbacks(pollLoop);
-        super.onDestroy();
-    }
-
-    @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        // Nothing else required — polling/UI works regardless of the result,
-        // it only affects whether status notifications are shown.
     }
 
     // ---------------------------------------------------------------- UI ---
@@ -114,42 +119,36 @@ public class MainActivity extends Activity {
     private void buildUi() {
         FrameLayout background = new FrameLayout(this);
         GradientDrawable bgGradient = new GradientDrawable(
-                GradientDrawable.Orientation.TL_BR, new int[]{C_BG_TOP, C_BG_BOTTOM});
+                GradientDrawable.Orientation.TOP_BOTTOM, new int[]{C_BG_TOP, C_BG_BOTTOM});
         background.setBackground(bgGradient);
 
         ScrollView scroll = new ScrollView(this);
         scroll.setLayoutParams(new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        scroll.setFillViewport(true);
 
         root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(20), dp(36), dp(20), dp(28));
+        // More top padding so content isn't glued to the status bar.
+        root.setPadding(dp(20), dp(64), dp(20), dp(32));
         root.setLayoutParams(new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        TextView title = new TextView(this);
-        title.setText("STONX BOT");
-        title.setTextColor(C_TEXT);
-        title.setTextSize(26);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        title.setGravity(Gravity.CENTER);
-        title.setLetterSpacing(0.08f);
-        root.addView(title);
+        root.addView(buildLogo());
 
         TextView subtitle = new TextView(this);
-        subtitle.setText("لوحة تحكم ربط الحساب");
+        subtitle.setText("لوحة تحكم البوت");
         subtitle.setTextColor(C_TEXT_DIM);
         subtitle.setTextSize(13);
         subtitle.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        subLp.gravity = Gravity.CENTER;
-        subLp.bottomMargin = dp(24);
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        subLp.topMargin = dp(6);
+        subLp.bottomMargin = dp(26);
         root.addView(subtitle, subLp);
 
-        // "Card" that holds the active screen — this is what gets the 3D
-        // entrance animation whenever the screen changes.
-        card = buildCardContainer();
+        // Active screen card
+        FrameLayout card = buildCardContainer();
         LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         cardLp.bottomMargin = dp(18);
@@ -164,16 +163,41 @@ public class MainActivity extends Activity {
         showLoadingScreen();
     }
 
-    private View buildCardContainer() {
+    /** "STONX BOT" wordmark with a blue→green→red gradient sweep. */
+    private View buildLogo() {
+        final TextView logo = new TextView(this);
+        logo.setText("STONX BOT");
+        logo.setTextSize(34);
+        logo.setTypeface(Typeface.create("sans-serif-black", Typeface.BOLD));
+        logo.setGravity(Gravity.CENTER);
+        logo.setLetterSpacing(0.06f);
+        logo.setTextColor(Color.WHITE);
+        logo.getPaint().setFakeBoldText(true);
+        logo.getViewTreeObserver().addOnGlobalLayoutListener(
+            new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
+                @Override public void onGlobalLayout() {
+                    int w = logo.getWidth();
+                    if (w <= 0) return;
+                    Shader shader = new LinearGradient(0, 0, w, 0,
+                            new int[]{C_BLUE, C_GREEN, C_RED},
+                            new float[]{0f, 0.55f, 1f}, Shader.TileMode.CLAMP);
+                    logo.getPaint().setShader(shader);
+                    logo.invalidate();
+                    logo.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+                }
+            });
+        return logo;
+    }
+
+    private FrameLayout buildCardContainer() {
         FrameLayout cardFrame = new FrameLayout(this);
         GradientDrawable cardBg = new GradientDrawable();
         cardBg.setColor(C_CARD);
-        cardBg.setCornerRadius(dp(18));
-        cardBg.setStroke(dp(1), 0x33FFFFFF);
+        cardBg.setCornerRadius(dp(20));
+        cardBg.setStroke(dp(1), C_CARD_LINE);
         cardFrame.setBackground(cardBg);
         cardFrame.setPadding(dp(20), dp(22), dp(20), dp(22));
-        if (Build.VERSION.SDK_INT >= 21) cardFrame.setElevation(dp(14));
-        cardFrame.setCameraDistance(14000);
+        if (Build.VERSION.SDK_INT >= 21) cardFrame.setElevation(dp(10));
 
         screenContainer = new FrameLayout(this);
         screenContainer.setLayoutParams(new FrameLayout.LayoutParams(
@@ -186,11 +210,11 @@ public class MainActivity extends Activity {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         GradientDrawable bg = new GradientDrawable();
-        bg.setColor(0xCC0A0F1C);
-        bg.setCornerRadius(dp(16));
-        bg.setStroke(dp(1), 0x22FFFFFF);
+        bg.setColor(C_CARD);
+        bg.setCornerRadius(dp(20));
+        bg.setStroke(dp(1), C_CARD_LINE);
         panel.setBackground(bg);
-        panel.setPadding(dp(16), dp(14), dp(16), dp(14));
+        panel.setPadding(dp(18), dp(16), dp(18), dp(16));
 
         LinearLayout statusRow = new LinearLayout(this);
         statusRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -201,8 +225,8 @@ public class MainActivity extends Activity {
         dotBg.setShape(GradientDrawable.OVAL);
         dotBg.setColor(C_TEXT_DIM);
         statusDot.setBackground(dotBg);
-        LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(dp(10), dp(10));
-        dotLp.rightMargin = dp(8);
+        LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(dp(11), dp(11));
+        dotLp.rightMargin = dp(9);
         statusRow.addView(statusDot, dotLp);
 
         statusText = new TextView(this);
@@ -214,59 +238,70 @@ public class MainActivity extends Activity {
 
         panel.addView(statusRow);
 
-        LinearLayout monitorHeaderRow = new LinearLayout(this);
-        monitorHeaderRow.setOrientation(LinearLayout.HORIZONTAL);
-        monitorHeaderRow.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout.LayoutParams headerRowLp = new LinearLayout.LayoutParams(
+        // header row: label + copy button
+        LinearLayout headerRow = new LinearLayout(this);
+        headerRow.setOrientation(LinearLayout.HORIZONTAL);
+        headerRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams headerLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        headerRowLp.topMargin = dp(12);
+        headerLp.topMargin = dp(14);
 
         TextView monitorLabel = new TextView(this);
         monitorLabel.setText("سجل الأحداث");
         monitorLabel.setTextColor(C_TEXT_DIM);
         monitorLabel.setTextSize(11);
-        LinearLayout.LayoutParams monitorLabelLp = new LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams labelLp = new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        monitorHeaderRow.addView(monitorLabel, monitorLabelLp);
+        headerRow.addView(monitorLabel, labelLp);
 
-        Button copyLogBtn = new Button(this);
-        copyLogBtn.setText("⧉ نسخ السجل");
-        copyLogBtn.setTextColor(Color.WHITE);
-        copyLogBtn.setTextSize(11);
-        copyLogBtn.setAllCaps(false);
-        copyLogBtn.setPadding(dp(10), dp(4), dp(10), dp(4));
-        copyLogBtn.setMinHeight(0);
-        copyLogBtn.setMinimumHeight(0);
-        GradientDrawable copyLogBg = new GradientDrawable();
-        copyLogBg.setColor(0x33FFFFFF);
-        copyLogBg.setCornerRadius(dp(8));
-        copyLogBtn.setBackground(copyLogBg);
-        copyLogBtn.setOnClickListener(new View.OnClickListener() {
+        TextView copyLog = new TextView(this);
+        copyLog.setText("نسخ ⧉");
+        copyLog.setTextColor(C_BLUE);
+        copyLog.setTextSize(11);
+        copyLog.setPadding(dp(10), dp(4), dp(10), dp(4));
+        GradientDrawable clBg = new GradientDrawable();
+        clBg.setColor(0x142EA6FF);
+        clBg.setCornerRadius(dp(8));
+        copyLog.setBackground(clBg);
+        copyLog.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
                 ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
                 cm.setPrimaryClip(ClipData.newPlainText("stonx-log", logText.getText().toString()));
-                showToast("تم نسخ السجل كامل");
+                showToast("تم نسخ السجل");
             }
         });
-        monitorHeaderRow.addView(copyLogBtn);
+        headerRow.addView(copyLog);
 
-        panel.addView(monitorHeaderRow, headerRowLp);
+        panel.addView(headerRow, headerLp);
 
+        // taller, cleaner console
         logScroll = new ScrollView(this);
         LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(160));
-        scrollLp.topMargin = dp(6);
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(240));
+        scrollLp.topMargin = dp(8);
         GradientDrawable logBg = new GradientDrawable();
-        logBg.setColor(0xFF05070D);
-        logBg.setCornerRadius(dp(10));
+        logBg.setColor(C_LOG_BG);
+        logBg.setCornerRadius(dp(12));
+        logBg.setStroke(dp(1), C_CARD_LINE);
         logScroll.setBackground(logBg);
-        logScroll.setPadding(dp(10), dp(8), dp(10), dp(8));
+        logScroll.setPadding(dp(12), dp(10), dp(12), dp(10));
+        // Track whether the user has scrolled away from the bottom.
+        logScroll.getViewTreeObserver().addOnScrollChangedListener(
+            new android.view.ViewTreeObserver.OnScrollChangedListener() {
+                @Override public void onScrollChanged() {
+                    View child = logScroll.getChildAt(0);
+                    if (child == null) return;
+                    int diff = child.getBottom() - (logScroll.getHeight() + logScroll.getScrollY());
+                    logStickToBottom = diff <= dp(24);
+                }
+            });
 
         logText = new TextView(this);
         logText.setText("...");
-        logText.setTextColor(0xFF7CE3B5);
+        logText.setTextColor(C_LOG_TEXT);
         logText.setTextSize(11);
         logText.setTypeface(Typeface.MONOSPACE);
+        logText.setLineSpacing(dp(2), 1f);
         logText.setTextIsSelectable(true);
         logScroll.addView(logText);
         panel.addView(logScroll, scrollLp);
@@ -274,24 +309,16 @@ public class MainActivity extends Activity {
         return panel;
     }
 
-    /** Swaps the content of the card with a 3D flip-in animation. */
     private void setScreen(String kind, View content) {
-        if (kind.equals(currentScreenKind)) return; // don't rebuild & lose input while user is typing
+        if (kind.equals(currentScreenKind)) return;
         currentScreenKind = kind;
         screenContainer.removeAllViews();
         screenContainer.addView(content);
-
-        card.setRotationY(-90f);
-        card.setAlpha(0.2f);
-        ObjectAnimator rotate = ObjectAnimator.ofFloat(card, "rotationY", -90f, 0f);
-        ObjectAnimator fade = ObjectAnimator.ofFloat(card, "alpha", 0.2f, 1f);
-        rotate.setDuration(420);
-        fade.setDuration(420);
-        rotate.start();
-        fade.start();
     }
 
-    private Button bigButton(String text) {
+    // ---- reusable widgets ----
+
+    private Button primaryButton(String text, int colorA, int colorB) {
         Button b = new Button(this);
         b.setText(text);
         b.setAllCaps(false);
@@ -299,11 +326,26 @@ public class MainActivity extends Activity {
         b.setTextSize(15);
         b.setTypeface(Typeface.DEFAULT_BOLD);
         GradientDrawable bg = new GradientDrawable(
-                GradientDrawable.Orientation.LEFT_RIGHT, new int[]{C_ACCENT, C_ACCENT_2});
+                GradientDrawable.Orientation.LEFT_RIGHT, new int[]{colorA, colorB});
         bg.setCornerRadius(dp(14));
         b.setBackground(bg);
-        b.setPadding(dp(18), dp(16), dp(18), dp(16));
-        if (Build.VERSION.SDK_INT >= 21) b.setElevation(dp(6));
+        b.setPadding(dp(18), dp(15), dp(18), dp(15));
+        if (Build.VERSION.SDK_INT >= 21) b.setElevation(dp(4));
+        return b;
+    }
+
+    private Button solidButton(String text, int color) {
+        Button b = new Button(this);
+        b.setText(text);
+        b.setAllCaps(false);
+        b.setTextColor(Color.WHITE);
+        b.setTextSize(15);
+        b.setTypeface(Typeface.DEFAULT_BOLD);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(color);
+        bg.setCornerRadius(dp(14));
+        b.setBackground(bg);
+        b.setPadding(dp(18), dp(15), dp(18), dp(15));
         return b;
     }
 
@@ -323,8 +365,8 @@ public class MainActivity extends Activity {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setGravity(Gravity.CENTER);
-        TextView t = screenLabel("جارِ الاتصال بالبوت...");
-        box.addView(t);
+        box.setPadding(0, dp(10), 0, dp(10));
+        box.addView(screenLabel("جارِ الاتصال بالبوت..."));
         setScreen("loading", box);
     }
 
@@ -334,7 +376,7 @@ public class MainActivity extends Activity {
 
         box.addView(screenLabel("اختر طريقة ربط الحساب"));
 
-        Button phoneBtn = bigButton("📱  الربط برقم الهاتف");
+        Button phoneBtn = primaryButton("📱  الربط برقم الهاتف", C_BLUE, C_GREEN);
         LinearLayout.LayoutParams lp1 = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp1.topMargin = dp(18);
@@ -343,7 +385,7 @@ public class MainActivity extends Activity {
         });
         box.addView(phoneBtn, lp1);
 
-        Button qrBtn = bigButton("🔳  الربط عبر QR");
+        Button qrBtn = primaryButton("🔳  الربط عبر QR", C_GREEN, C_BLUE);
         LinearLayout.LayoutParams lp2 = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp2.topMargin = dp(12);
@@ -368,7 +410,7 @@ public class MainActivity extends Activity {
             }
         });
         if (method.equals("phone")) {
-            currentScreenKind = ""; // force rebuild even though state hasn't changed yet
+            currentScreenKind = "";
             showPhoneInputScreen();
         } else {
             currentScreenKind = "";
@@ -381,45 +423,53 @@ public class MainActivity extends Activity {
         box.setOrientation(LinearLayout.VERTICAL);
         box.addView(screenLabel("أدخل رقم الهاتف"));
 
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
+        // Single combined field: country code + a hidden gap + number.
+        final EditText phoneField = new EditText(this);
+        phoneField.setHint("968 · رقم الهاتف بدون صفر");
+        phoneField.setHintTextColor(C_TEXT_DIM);
+        phoneField.setTextColor(C_TEXT);
+        phoneField.setTextSize(16);
+        phoneField.setInputType(InputType.TYPE_CLASS_PHONE);
+        phoneField.setText(pendingCountryCode + "  ");
+        phoneField.setSelection(phoneField.getText().length());
+        // Keep the keyboard from closing after each digit.
+        phoneField.setImeOptions(EditorInfo.IME_FLAG_NO_EXTRACT_UI | EditorInfo.IME_ACTION_DONE);
+        GradientDrawable fbg = new GradientDrawable();
+        fbg.setColor(C_FIELD_BG);
+        fbg.setCornerRadius(dp(12));
+        fbg.setStroke(dp(1), C_CARD_LINE);
+        phoneField.setBackground(fbg);
+        phoneField.setPadding(dp(14), dp(14), dp(14), dp(14));
+        LinearLayout.LayoutParams fieldLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        rowLp.topMargin = dp(16);
+        fieldLp.topMargin = dp(16);
+        box.addView(phoneField, fieldLp);
 
-        EditText codeInput = fieldInput(pendingCountryCode, InputType.TYPE_CLASS_PHONE);
-        LinearLayout.LayoutParams codeLp = new LinearLayout.LayoutParams(dp(80), ViewGroup.LayoutParams.WRAP_CONTENT);
-        codeLp.rightMargin = dp(8);
-        row.addView(codeInput, codeLp);
+        TextView hint = new TextView(this);
+        hint.setText("مثال: 96877274542  (رمز الدولة ثم الرقم)");
+        hint.setTextColor(C_TEXT_DIM);
+        hint.setTextSize(11);
+        LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        hintLp.topMargin = dp(6);
+        box.addView(hint, hintLp);
 
-        EditText numberInput = fieldInput("رقم الهاتف بدون صفر", InputType.TYPE_CLASS_PHONE);
-        numberInput.setHint("رقم الهاتف بدون صفر");
-        numberInput.setText("");
-        LinearLayout.LayoutParams numLp = new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        row.addView(numberInput, numLp);
-
-        box.addView(row, rowLp);
-
-        Button connectBtn = bigButton("اتصال");
+        Button connectBtn = primaryButton("اتصال", C_BLUE, C_GREEN);
         LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         btnLp.topMargin = dp(16);
         connectBtn.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
-                String cc = codeInput.getText().toString().replaceAll("[^0-9]", "");
-                String num = numberInput.getText().toString().replaceAll("[^0-9]", "");
-                if (num.length() < 6) {
+                final String digits = phoneField.getText().toString().replaceAll("[^0-9]", "");
+                if (digits.length() < 8) {
                     showToast("رقم غير صالح");
                     return;
                 }
-                pendingCountryCode = "+" + cc;
-                final String fullNumber = cc + num;
                 runOffThread(new Runnable() {
                     @Override public void run() {
                         try {
                             JSONObject body = new JSONObject();
-                            body.put("number", fullNumber);
+                            body.put("number", digits);
                             ApiClient.postJson("/api/phone", body);
                         } catch (Exception e) {
                             showToast("تعذر إرسال الرقم: " + e.getMessage());
@@ -434,69 +484,57 @@ public class MainActivity extends Activity {
         setScreen("phone_input", box);
     }
 
-    private EditText fieldInput(String hint, int inputType) {
-        EditText e = new EditText(this);
-        e.setHint(hint);
-        e.setHintTextColor(C_TEXT_DIM);
-        e.setTextColor(C_TEXT);
-        e.setInputType(inputType);
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(0x33FFFFFF);
-        bg.setCornerRadius(dp(10));
-        e.setBackground(bg);
-        e.setPadding(dp(12), dp(10), dp(12), dp(10));
-        return e;
-    }
-
     private void showPairingCodeScreen(String code) {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.addView(screenLabel("افتح واتساب → الأجهزة المرتبطة → ربط برقم الهاتف"));
+        box.setGravity(Gravity.CENTER_HORIZONTAL);
 
+        TextView hint = new TextView(this);
+        hint.setText("واتساب ← الأجهزة المرتبطة ← ربط برقم الهاتف");
+        hint.setTextColor(C_TEXT_DIM);
+        hint.setTextSize(12);
+        hint.setGravity(Gravity.CENTER);
+        box.addView(hint);
+
+        // compact code chip + small copy icon side by side
         LinearLayout codeRow = new LinearLayout(this);
         codeRow.setOrientation(LinearLayout.HORIZONTAL);
-        codeRow.setGravity(Gravity.CENTER_VERTICAL);
+        codeRow.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams codeRowLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        codeRowLp.topMargin = dp(18);
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        codeRowLp.topMargin = dp(16);
 
         TextView codeText = new TextView(this);
         codeText.setText(code);
-        codeText.setTextColor(C_ACCENT_2);
-        codeText.setTextSize(26);
+        codeText.setTextColor(C_GREEN);
+        codeText.setTextSize(22);
         codeText.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
-        codeText.setLetterSpacing(0.15f);
+        codeText.setLetterSpacing(0.12f);
         GradientDrawable codeBg = new GradientDrawable();
-        codeBg.setColor(0x22FFFFFF);
-        codeBg.setCornerRadius(dp(12));
+        codeBg.setColor(0x1425D9A4);
+        codeBg.setCornerRadius(dp(10));
+        codeBg.setStroke(dp(1), 0x3325D9A4);
         codeText.setBackground(codeBg);
-        codeText.setPadding(dp(16), dp(12), dp(16), dp(12));
+        codeText.setPadding(dp(18), dp(10), dp(18), dp(10));
         codeText.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams codeTextLp = new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        codeRow.addView(codeText, codeTextLp);
+        codeRow.addView(codeText);
 
-        // No drawable resources are available in this build (no aapt/res
-        // compilation on-device), so the copy button is a styled glyph
-        // button rather than an ImageButton with an icon drawable.
-        Button copyGlyphBtn = new Button(this);
-        copyGlyphBtn.setText("⧉");
-        copyGlyphBtn.setTextColor(Color.WHITE);
-        copyGlyphBtn.setTextSize(18);
-        GradientDrawable copyBg = new GradientDrawable();
-        copyBg.setColor(C_ACCENT);
-        copyBg.setCornerRadius(dp(12));
-        copyGlyphBtn.setBackground(copyBg);
-        LinearLayout.LayoutParams copyLp = new LinearLayout.LayoutParams(dp(52), dp(52));
+        final String codeVal = code;
+        TextView copyIcon = new TextView(this);
+        copyIcon.setText("⧉");
+        copyIcon.setTextColor(C_BLUE);
+        copyIcon.setTextSize(20);
+        copyIcon.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams copyLp = new LinearLayout.LayoutParams(dp(40), dp(40));
         copyLp.leftMargin = dp(10);
-        copyGlyphBtn.setOnClickListener(new View.OnClickListener() {
+        copyIcon.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
                 ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-                cm.setPrimaryClip(ClipData.newPlainText("stonx-pairing-code", code));
+                cm.setPrimaryClip(ClipData.newPlainText("stonx-pairing-code", codeVal));
                 showToast("تم نسخ الرمز");
             }
         });
-        codeRow.addView(copyGlyphBtn, copyLp);
+        codeRow.addView(copyIcon, copyLp);
 
         box.addView(codeRow, codeRowLp);
         setScreen("phone_code:" + code, box);
@@ -511,14 +549,14 @@ public class MainActivity extends Activity {
         FrameLayout qrFrame = new FrameLayout(this);
         GradientDrawable qrBg = new GradientDrawable();
         qrBg.setColor(Color.WHITE);
-        qrBg.setCornerRadius(dp(14));
+        qrBg.setCornerRadius(dp(16));
         qrFrame.setBackground(qrBg);
         qrFrame.setPadding(dp(10), dp(10), dp(10), dp(10));
-        LinearLayout.LayoutParams qrFrameLp = new LinearLayout.LayoutParams(dp(240), dp(240));
-        qrFrameLp.topMargin = dp(18);
+        LinearLayout.LayoutParams qrFrameLp = new LinearLayout.LayoutParams(dp(210), dp(210));
+        qrFrameLp.topMargin = dp(16);
         qrFrameLp.gravity = Gravity.CENTER_HORIZONTAL;
 
-        android.widget.ImageView qrImgView = new android.widget.ImageView(this);
+        ImageView qrImgView = new ImageView(this);
         qrImgView.setLayoutParams(new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         qrImgView.setTag("qr_image");
@@ -529,7 +567,7 @@ public class MainActivity extends Activity {
         loadQrImage(qrImgView);
     }
 
-    private void loadQrImage(final android.widget.ImageView target) {
+    private void loadQrImage(final ImageView target) {
         runOffThread(new Runnable() {
             @Override public void run() {
                 try {
@@ -538,27 +576,23 @@ public class MainActivity extends Activity {
                         final Bitmap bmp = BitmapFactory.decodeByteArray(png, 0, png.length);
                         handler.post(new Runnable() {
                             @Override public void run() {
-                                if (target.getTag() != null && "qr_image".equals(target.getTag())) {
-                                    target.setImageBitmap(bmp);
-                                }
+                                if ("qr_image".equals(target.getTag())) target.setImageBitmap(bmp);
                             }
                         });
                     }
-                } catch (Exception ignored) {
-                    // Will retry on the next poll tick while state stays AWAITING_QR_SCAN.
-                }
+                } catch (Exception ignored) {}
             }
         });
     }
 
-    private void showConnectedScreen(String jid) {
+    private void showConnectedScreen(String jid, boolean paused) {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setGravity(Gravity.CENTER_HORIZONTAL);
 
         TextView ok = new TextView(this);
-        ok.setText("✅ متصل بنجاح");
-        ok.setTextColor(C_OK);
+        ok.setText(paused ? "⏸ البوت متوقف مؤقتًا" : "✅ متصل بنجاح");
+        ok.setTextColor(paused ? C_AMBER : C_GREEN);
         ok.setTextSize(18);
         ok.setTypeface(Typeface.DEFAULT_BOLD);
         ok.setGravity(Gravity.CENTER);
@@ -574,26 +608,47 @@ public class MainActivity extends Activity {
         jidLp.topMargin = dp(4);
         box.addView(jidText, jidLp);
 
-        Button stopBtn = bigButton("🗑  حذف الجلسة / إيقاف");
-        GradientDrawable stopBg = new GradientDrawable();
-        stopBg.setColor(C_BAD);
-        stopBg.setCornerRadius(dp(14));
-        stopBtn.setBackground(stopBg);
-        LinearLayout.LayoutParams stopLp = new LinearLayout.LayoutParams(
+        // Pause / Resume button (keeps session)
+        Button pauseBtn = solidButton(paused ? "▶  تشغيل البوت" : "⏸  إيقاف مؤقت",
+                paused ? C_GREEN : C_BLUE);
+        LinearLayout.LayoutParams pLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        stopLp.topMargin = dp(22);
+        pLp.topMargin = dp(20);
+        final boolean isPaused = paused;
+        pauseBtn.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                final String endpoint = isPaused ? "/api/resume" : "/api/pause";
+                runOffThread(new Runnable() {
+                    @Override public void run() {
+                        try {
+                            ApiClient.postJson(endpoint, new JSONObject());
+                        } catch (Exception e) {
+                            showToast("فشل: " + e.getMessage());
+                        }
+                    }
+                });
+                showToast(isPaused ? "جارِ التشغيل..." : "جارِ الإيقاف...");
+            }
+        });
+        box.addView(pauseBtn, pLp);
+
+        // Delete session button (full logout)
+        Button stopBtn = solidButton("🗑  حذف الجلسة", C_RED);
+        LinearLayout.LayoutParams sLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        sLp.topMargin = dp(10);
         stopBtn.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { confirmLogout(); }
         });
-        box.addView(stopBtn, stopLp);
+        box.addView(stopBtn, sLp);
 
-        setScreen("connected", box);
+        setScreen("connected:" + paused, box);
     }
 
     private void confirmLogout() {
         new AlertDialog.Builder(this)
                 .setTitle("تأكيد")
-                .setMessage("هل تريد حذف الجلسة الحالية وإيقاف الربط؟")
+                .setMessage("هل تريد حذف الجلسة نهائيًا والرجوع لربط جديد؟")
                 .setPositiveButton("حذف", new android.content.DialogInterface.OnClickListener() {
                     @Override public void onClick(android.content.DialogInterface d, int w) {
                         runOffThread(new Runnable() {
@@ -614,8 +669,7 @@ public class MainActivity extends Activity {
     // ------------------------------------------------------------- Polling ---
 
     private final Runnable pollLoop = new Runnable() {
-        @Override
-        public void run() {
+        @Override public void run() {
             runOffThread(new Runnable() {
                 @Override public void run() { pollOnce(); }
             });
@@ -626,23 +680,19 @@ public class MainActivity extends Activity {
     private void pollOnce() {
         try {
             JSONObject status = ApiClient.getJson("/api/status");
-            String state = status.optString("state", "STARTING");
-            String ownJid = status.optString("ownJid", null);
-            String pairingCode = status.optString("pairingCode", null);
+            final String state = status.optString("state", "STARTING");
+            final String ownJid = status.optString("ownJid", null);
+            final String pairingCode = status.optString("pairingCode", null);
 
             JSONObject logsResp = ApiClient.getJson("/api/logs");
             JSONArray lines = logsResp.optJSONArray("lines");
-            String logDump = renderLogs(lines);
+            final String logDump = renderLogs(lines);
 
-            final String fState = state;
-            final String fOwnJid = ownJid;
-            final String fPairingCode = pairingCode;
-            final String fLogDump = logDump;
             handler.post(new Runnable() {
                 @Override public void run() {
-                    applyState(fState, fOwnJid, fPairingCode);
-                    updateMonitor(fState, fLogDump);
-                    notifyStateChange(fState);
+                    applyState(state, ownJid, pairingCode);
+                    updateMonitor(state, logDump);
+                    notifyStateChange(state);
                 }
             });
         } catch (Exception e) {
@@ -650,14 +700,11 @@ public class MainActivity extends Activity {
                     + "\n\n--- node-error.log ---\n" + readLogFile("node-error.log")
                     + "\n\n--- node-stdout.log ---\n" + readLogFile("node-stdout.log");
             handler.post(new Runnable() {
-                @Override public void run() {
-                    updateMonitor("DISCONNECTED", errMsg);
-                }
+                @Override public void run() { updateMonitor("DISCONNECTED", errMsg); }
             });
         }
     }
 
-    /** Reads a log file NodeBootstrapService writes to app-private storage. */
     private String readLogFile(String name) {
         try {
             java.io.File f = new java.io.File(getFilesDir(), name);
@@ -673,16 +720,15 @@ public class MainActivity extends Activity {
     private String renderLogs(JSONArray lines) {
         if (lines == null) return "";
         StringBuilder sb = new StringBuilder();
-        int start = Math.max(0, lines.length() - 40);
+        int start = Math.max(0, lines.length() - 60);
         for (int i = start; i < lines.length(); i++) {
             JSONObject entry = lines.optJSONObject(i);
             if (entry == null) continue;
-            sb.append(entry.optString("time", "").replace("T", " ").replace("Z", ""))
-              .append("  ")
-              .append(entry.optString("level", "").toUpperCase())
-              .append("  ")
-              .append(entry.optString("message", ""))
-              .append("\n");
+            String time = entry.optString("time", "");
+            if (time.length() >= 19) time = time.substring(11, 19); // HH:mm:ss only
+            sb.append(time).append("  ")
+              .append(entry.optString("level", "").toUpperCase()).append("  ")
+              .append(entry.optString("message", "")).append("\n");
         }
         return sb.toString();
     }
@@ -704,16 +750,16 @@ public class MainActivity extends Activity {
             case "AWAITING_QR_SCAN":
                 if (!currentScreenKind.equals("qr")) showQrScreen();
                 else {
-                    // still on the qr screen — keep refreshing the image in case it rotated
                     View img = screenContainer.findViewWithTag("qr_image");
-                    if (img instanceof android.widget.ImageView) loadQrImage((android.widget.ImageView) img);
+                    if (img instanceof ImageView) loadQrImage((ImageView) img);
                 }
                 break;
-            case "CONNECTED":
-                if (!currentScreenKind.equals("connected")) showConnectedScreen(ownJid);
+            case "PAUSED":
+                if (!currentScreenKind.equals("connected:true")) showConnectedScreen(ownJid, true);
                 break;
-            case "STARTING":
-            case "CONNECTING":
+            case "CONNECTED":
+                if (!currentScreenKind.equals("connected:false")) showConnectedScreen(ownJid, false);
+                break;
             default:
                 if (currentScreenKind.isEmpty() || currentScreenKind.equals("loading")) showLoadingScreen();
                 break;
@@ -726,43 +772,44 @@ public class MainActivity extends Activity {
         dotBg.setColor(colorForState(state));
         if (!logDump.isEmpty()) {
             logText.setText(logDump);
-            logScroll.post(new Runnable() {
-                @Override public void run() { logScroll.fullScroll(View.FOCUS_DOWN); }
-            });
+            if (logStickToBottom) {
+                logScroll.post(new Runnable() {
+                    @Override public void run() { logScroll.fullScroll(View.FOCUS_DOWN); }
+                });
+            }
         }
     }
 
     private String arabicStateLabel(String state) {
         switch (state) {
             case "CONNECTED": return "🟢 متصل";
+            case "PAUSED": return "⏸ متوقف مؤقتًا";
             case "RECONNECTING": return "🟡 إعادة الاتصال...";
             case "DISCONNECTED": return "🟡 غير متصل";
             case "AWAITING_QR_SCAN": return "🔳 بانتظار مسح QR";
-            case "AWAITING_PAIRING_CONFIRM": return "🔑 بانتظار إدخال رمز الربط";
-            case "AWAITING_PHONE_NUMBER": return "📱 بانتظار رقم الهاتف";
-            case "AWAITING_METHOD_CHOICE": return "⏳ بانتظار اختيار طريقة الربط";
+            case "AWAITING_PAIRING_CONFIRM": return "🔑 بانتظار إدخال الرمز";
+            case "AWAITING_PHONE_NUMBER": return "📱 بانتظار الرقم";
+            case "AWAITING_METHOD_CHOICE": return "⏳ اختر طريقة الربط";
             case "LOGGED_OUT": return "⚪ تم تسجيل الخروج";
             default: return "⏳ " + state;
         }
     }
 
     private int colorForState(String state) {
-        if ("CONNECTED".equals(state)) return C_OK;
-        if ("RECONNECTING".equals(state) || "DISCONNECTED".equals(state)) return C_WARN;
+        if ("CONNECTED".equals(state)) return C_GREEN;
+        if ("PAUSED".equals(state)) return C_AMBER;
+        if ("RECONNECTING".equals(state) || "DISCONNECTED".equals(state)) return C_AMBER;
         if (state == null || state.isEmpty()) return C_TEXT_DIM;
-        return C_ACCENT_2;
+        return C_BLUE;
     }
 
     private void notifyStateChange(String state) {
         if (state.equals(lastNotifiedState)) return;
         lastNotifiedState = state;
-        if (state.equals("CONNECTED")) {
-            pushNotification("STONX BOT", "متصل بنجاح ✅");
-        } else if (state.equals("RECONNECTING") || state.equals("DISCONNECTED")) {
-            pushNotification("STONX BOT", "جارِ إعادة الاتصال...");
-        } else if (state.equals("LOGGED_OUT")) {
-            pushNotification("STONX BOT", "تم تسجيل الخروج");
-        }
+        if (state.equals("CONNECTED")) pushNotification("STONX BOT", "متصل بنجاح ✅");
+        else if (state.equals("PAUSED")) pushNotification("STONX BOT", "البوت متوقف مؤقتًا ⏸");
+        else if (state.equals("RECONNECTING") || state.equals("DISCONNECTED")) pushNotification("STONX BOT", "جارِ إعادة الاتصال...");
+        else if (state.equals("LOGGED_OUT")) pushNotification("STONX BOT", "تم تسجيل الخروج");
     }
 
     // -------------------------------------------------------- Notifications ---
@@ -771,7 +818,6 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
                     CHANNEL_ID, "حالة STONX BOT", NotificationManager.IMPORTANCE_LOW);
-            channel.setDescription("إشعارات حالة اتصال بوت STONX");
             NotificationManager nm = getSystemService(NotificationManager.class);
             if (nm != null) nm.createNotificationChannel(channel);
         }

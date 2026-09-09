@@ -55,7 +55,17 @@ public class NodeBootstrapService extends Service {
         try {
             File projectDir = new File(getFilesDir(), PROJECT_DIR_NAME);
             File marker = new File(getFilesDir(), ".stonx-bundle-version");
-            String expectedVersion = "1"; // bump if you repackage the JS project
+            // Tie the extracted-project version to the app's own versionCode,
+            // so every new APK install automatically re-extracts the bundled
+            // bot JS (no need to hand-bump a number when the JS changes).
+            String expectedVersion;
+            try {
+                expectedVersion = String.valueOf(
+                        getPackageManager().getPackageInfo(getPackageName(), 0).versionCode)
+                        + "-" + getPackageManager().getPackageInfo(getPackageName(), 0).lastUpdateTime;
+            } catch (Exception e) {
+                expectedVersion = "fallback";
+            }
 
             if (!marker.exists() || !readMarker(marker).equals(expectedVersion)) {
                 deleteRecursive(projectDir);

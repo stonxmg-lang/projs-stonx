@@ -96,6 +96,16 @@ function startApiServer(connectionManager) {
         return sendJson(res, 200, { ok: true });
       }
 
+      if (req.method === 'POST' && pathname === '/api/pause') {
+        await connectionManager.pauseBot();
+        return sendJson(res, 200, { ok: true });
+      }
+
+      if (req.method === 'POST' && pathname === '/api/resume') {
+        await connectionManager.resumeBot();
+        return sendJson(res, 200, { ok: true });
+      }
+
       if (req.method === 'GET' && pathname === '/api/logs') {
         return sendJson(res, 200, { lines: logger.getRecentLogs() });
       }
