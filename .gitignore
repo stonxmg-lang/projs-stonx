@@ -1,0 +1,7 @@
+bot/node_modules/
+bot/data/
+bot/downloads/
+android/app/build/
+android/app/libnode/
+android/.gradle/
+android/app/src/main/assets/

@@ -1,0 +1,64 @@
+name: Build STONX BOT APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Node.js dependencies for the bot (pure JS only, no native modules)
+        working-directory: bot
+        run: npm ci --omit=dev
+
+      - name: Stage bot project as Android assets
+        run: |
+          mkdir -p android/app/src/main/assets
+          cp -r bot android/app/src/main/assets/nodejs-project
+          find android/app/src/main/assets/nodejs-project -type f \
+            | sed 's|android/app/src/main/assets/nodejs-project/||' \
+            > android/app/src/main/assets/nodejs-project-filelist.txt
+
+      - name: Download nodejs-mobile Android runtime (libnode.so + headers)
+        run: |
+          API_URL="https://api.github.com/repos/nodejs-mobile/nodejs-mobile/releases/latest"
+          ASSET_URL=$(curl -s "$API_URL" | grep "browser_download_url.*android.*\.zip" | head -1 | cut -d '"' -f 4)
+          echo "Downloading: $ASSET_URL"
+          curl -L "$ASSET_URL" -o nodejs-mobile-android.zip
+          mkdir -p nodejs-mobile-android
+          unzip -q nodejs-mobile-android.zip -d nodejs-mobile-android
+          mkdir -p android/app/libnode
+          cp -r nodejs-mobile-android/bin android/app/libnode/bin
+          cp -r nodejs-mobile-android/include android/app/libnode/include
+
+      - name: Install Android NDK + CMake
+        run: |
+          echo "y" | ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager --install "ndk;25.2.9519653" "cmake;3.22.1"
+
+      - name: Generate a signing key (self-signed, for sideloading)
+        run: |
+          keytool -genkeypair -v \
+            -keystore "$HOME/stonx-release.keystore" \
+            -storepass stonxbot -keypass stonxbot \
+            -alias stonxbot -keyalg RSA -keysize 2048 -validity 36500 \
+            -dname "CN=STONX BOT, OU=Personal, O=Personal, L=Unknown, S=Unknown, C=XX"
+
+      - name: Build APK
+        working-directory: android
+        run: |
+          gradle assembleRelease --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: stonx-bot-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
