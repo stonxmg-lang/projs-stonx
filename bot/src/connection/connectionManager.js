@@ -223,7 +223,7 @@ class ConnectionManager {
         events.emit('pairing.code', code);
         events.emit('connection.state', this.state);
       } catch (err) {
-        logger.error('Failed to request pairing code', { error: err.message });
+        logger.error('Failed to request pairing code: ' + (err && err.message) + ' | stack: ' + (err && err.stack ? String(err.stack).split('\n').slice(0,3).join(' ') : 'n/a'));
         // Let the app try again with a corrected number.
         this._pendingPhoneNumber = null;
         this.state = config.CONNECTION_STATE.AWAITING_PHONE_NUMBER;
@@ -303,7 +303,8 @@ class ConnectionManager {
 
       this.state = config.CONNECTION_STATE.DISCONNECTED;
       console.log('🟡 WhatsApp connection lost');
-      logger.warn('Connection closed, will reconnect', { statusCode });
+      logger.warn('Connection closed, will reconnect | statusCode=' + statusCode
+        + ' | reason=' + (lastDisconnect?.error?.message || 'n/a'));
       events.emit('connection.state', this.state);
 
       this._unbindSocket(this.sock);

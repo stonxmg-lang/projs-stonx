@@ -7,6 +7,11 @@ const { Bot } = require('./core/bot');
 async function main() {
   const depsOk = dependencyChecker.checkAll();
   if (!depsOk) {
+    // On the standalone Android APK build, external CLI tools like ffmpeg
+    // and yt-dlp aren't available (and nodejs-mobile can't spawn them
+    // anyway). We DON'T abort here — the bot still connects to WhatsApp and
+    // every command that doesn't rely on those tools works normally. Only
+    // the audio/video download features will be unavailable.
     console.log('⚠️ بعض الأدوات الخارجية ناقصة — هيتم تشغيل البوت بدون ميزات التحميل/التحويل.');
   }
 
