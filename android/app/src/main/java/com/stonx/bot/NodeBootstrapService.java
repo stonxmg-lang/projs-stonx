@@ -67,6 +67,21 @@ public class NodeBootstrapService extends Service {
             Os.setenv("HOME", getFilesDir().getAbsolutePath(), true);
             Os.setenv("TMPDIR", getCacheDir().getAbsolutePath(), true);
 
+            // Redirect this process's stdout+stderr (fd 1 and 2) into our log
+            // file at the OS level, BEFORE node starts. node (running via JNI
+            // in this same process) writes its startup errors to stderr,
+            // which normally goes to Android's logcat where Termux can't read
+            // it. This captures the real crash reason into node-error.log.
+            try {
+                File nodeOut = new File(getFilesDir(), "node-stdout.log");
+                java.io.FileDescriptor fd = new java.io.FileOutputStream(nodeOut, true).getFD();
+                Os.dup2(fd, 1); // stdout
+                Os.dup2(fd, 2); // stderr
+                writeLog("redirected node stdio to node-stdout.log");
+            } catch (Throwable redirErr) {
+                writeLog("could not redirect node stdio: " + redirErr);
+            }
+
             String entryScript = new File(projectDir, "src/index.js").getAbsolutePath();
             writeLog("starting node with entry: " + entryScript);
             int exitCode = NodeBridge.startNodeWithArguments(new String[]{"node", entryScript});
@@ -96,6 +111,11 @@ public class NodeBootstrapService extends Service {
                 try {
                     in = am.open(assetSubdir + "/" + relPath);
                 } catch (IOException notFound) {
+                    // Android's asset packager silently drops dot-files
+                    // (e.g. .gitkeep) and some other ignored patterns, so a
+                    // path can be listed in the manifest yet absent from the
+                    // APK. Skipping these is correct — they're placeholders,
+                    // never needed at runtime.
                     continue;
                 }
                 try {

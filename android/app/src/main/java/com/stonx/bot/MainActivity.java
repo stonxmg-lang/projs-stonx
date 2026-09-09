@@ -647,7 +647,8 @@ public class MainActivity extends Activity {
             });
         } catch (Exception e) {
             final String errMsg = "⚠ تعذر الوصول إلى خدمة البوت الداخلية.\n" + e.getMessage()
-                    + "\n\n--- node-error.log ---\n" + readNodeErrorLog();
+                    + "\n\n--- node-error.log ---\n" + readLogFile("node-error.log")
+                    + "\n\n--- node-stdout.log ---\n" + readLogFile("node-stdout.log");
             handler.post(new Runnable() {
                 @Override public void run() {
                     updateMonitor("DISCONNECTED", errMsg);
@@ -656,15 +657,14 @@ public class MainActivity extends Activity {
         }
     }
 
-    /** Reads the crash/status log NodeBootstrapService writes to app-private storage. */
-    private String readNodeErrorLog() {
+    /** Reads a log file NodeBootstrapService writes to app-private storage. */
+    private String readLogFile(String name) {
         try {
-            java.io.File f = new java.io.File(getFilesDir(), "node-error.log");
-            if (!f.exists()) return "(الملف لسه معملوش — الـ Service يمكن ماشتغلش خالص)";
+            java.io.File f = new java.io.File(getFilesDir(), name);
+            if (!f.exists()) return "(الملف لسه معملوش)";
             byte[] data = java.nio.file.Files.readAllBytes(f.toPath());
             String content = new String(data);
-            // keep only the last ~2000 chars so the monitor box doesn't overflow
-            return content.length() > 2000 ? content.substring(content.length() - 2000) : content;
+            return content.length() > 2500 ? content.substring(content.length() - 2500) : content;
         } catch (Exception e) {
             return "(تعذرت قراءة اللوج: " + e.getMessage() + ")";
         }
