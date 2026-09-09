@@ -7,8 +7,7 @@ const { Bot } = require('./core/bot');
 async function main() {
   const depsOk = dependencyChecker.checkAll();
   if (!depsOk) {
-    console.log('يرجى تثبيت المتطلبات الناقصة أعلاه ثم إعادة المحاولة.');
-    process.exit(1);
+    console.log('⚠️ بعض الأدوات الخارجية ناقصة — هيتم تشغيل البوت بدون ميزات التحميل/التحويل.');
   }
 
   const bot = new Bot();
