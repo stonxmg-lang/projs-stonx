@@ -1,0 +1,21 @@
+{
+  "name": "stonx",
+  "version": "1.0.0",
+  "description": "STONX - Modular WhatsApp Bot (Termux/Android, Baileys-based)",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "@hapi/boom": "^10.0.1",
+    "@innovatorssoft/baileys": "^7.4.2",
+    "@rexxhayanasi/elaina-baileys": "^1.3.9",
+    "pino": "^9.0.0",
+    "qrcode": "^1.5.3",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

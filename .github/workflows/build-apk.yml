@@ -18,7 +18,7 @@ jobs:
 
       - name: Install Node.js dependencies for the bot (pure JS only, no native modules)
         working-directory: bot
-        run: npm ci --omit=dev
+        run: npm install --omit=dev
 
       - name: Stage bot project as Android assets
         run: |

@@ -1,0 +1,76 @@
+'use strict';
+
+const path = require('path');
+
+const ROOT = path.join(__dirname, '..');
+
+module.exports = {
+  ROOT,
+  AUTH_DIR: path.join(ROOT, 'data', 'auth'),
+  DATABASE_DIR: path.join(ROOT, 'data', 'database'),
+  LOGS_DIR: path.join(ROOT, 'data', 'logs'),
+  MEDIA_DIR: path.join(ROOT, 'media'),
+  MALE_AUDIO_PATH: path.join(ROOT, 'media', 'male', 'salawat.mp3'),
+
+  BOT_ACCESS: {
+    PUBLIC: 'PUBLIC',
+    WHITELIST: 'WHITELIST',
+    PUBLIC_WITH_BLACKLIST: 'PUBLIC_WITH_BLACKLIST',
+    DISABLED: 'DISABLED'
+  },
+
+  CHAT_SCOPE: {
+    PRIVATE_ONLY: 'PRIVATE_ONLY',
+    GROUPS_ONLY: 'GROUPS_ONLY',
+    ALL: 'ALL',
+    ALLOWED_CHATS: 'ALLOWED_CHATS',
+    ALL_EXCEPT: 'ALL_EXCEPT'
+  },
+
+  CHAT_TYPE: {
+    PRIVATE: 'PRIVATE',
+    GROUP: 'GROUP',
+    SELF: 'SELF'
+  },
+
+  MALE_TARGET: {
+    CURRENT_CHAT: 'CURRENT_CHAT',
+    ALL: 'ALL',
+    GROUPS_ONLY: 'GROUPS_ONLY',
+    USERS_ONLY: 'USERS_ONLY',
+    SELF_CHAT: 'SELF_CHAT',
+    SELECTED: 'SELECTED'
+  },
+
+  CONNECTION_STATE: {
+    STARTING: 'STARTING',
+    CONNECTING: 'CONNECTING',
+    AWAITING_METHOD_CHOICE: 'AWAITING_METHOD_CHOICE',
+    AWAITING_PHONE_NUMBER: 'AWAITING_PHONE_NUMBER',
+    AWAITING_QR_SCAN: 'AWAITING_QR_SCAN',
+    AWAITING_PAIRING_CONFIRM: 'AWAITING_PAIRING_CONFIRM',
+    CONNECTED: 'CONNECTED',
+    DISCONNECTED: 'DISCONNECTED',
+    RECONNECTING: 'RECONNECTING',
+    LOGGED_OUT: 'LOGGED_OUT'
+  },
+
+  API: {
+    HOST: '127.0.0.1',
+    PORT: 7377
+  },
+
+  RECONNECT: {
+    BASE_DELAY_MS: 2000,
+    MAX_DELAY_MS: 60000,
+    MAX_ATTEMPTS: Infinity
+  },
+
+  DOWNLOAD_QUEUE: {
+    MAX_CONCURRENT: 2,
+    MAX_QUEUE_SIZE: 25,
+    JOB_TIMEOUT_MS: 5 * 60 * 1000
+  },
+
+  COMMAND_PREFIX: '/'
+};
