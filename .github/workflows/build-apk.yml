@@ -24,7 +24,7 @@ jobs:
         run: |
           mkdir -p android/app/src/main/assets
           cp -r bot android/app/src/main/assets/nodejs-project
-          find android/app/src/main/assets/nodejs-project -type f \
+          find android/app/src/main/assets/nodejs-project -type f ! -name ".*" \
             | sed 's|android/app/src/main/assets/nodejs-project/||' \
             > android/app/src/main/assets/nodejs-project-filelist.txt
 
@@ -52,13 +52,10 @@ jobs:
           cp "$LIBCXX" android/app/libnode/bin/arm64-v8a/libc++_shared.so
           ls -la android/app/libnode/bin/arm64-v8a/
 
-      - name: Generate a signing key (self-signed, for sideloading)
+      - name: Restore the fixed signing key (keeps all builds updatable over each other)
         run: |
-          keytool -genkeypair -v \
-            -keystore "$HOME/stonx-release.keystore" \
-            -storepass stonxbot -keypass stonxbot \
-            -alias stonxbot -keyalg RSA -keysize 2048 -validity 36500 \
-            -dname "CN=STONX BOT, OU=Personal, O=Personal, L=Unknown, S=Unknown, C=XX"
+          base64 -d android/keystore/stonx-release.keystore.b64 > "$HOME/stonx-release.keystore"
+          echo "keystore restored ($(wc -c < "$HOME/stonx-release.keystore") bytes)"
 
       - name: Build APK
         working-directory: android
