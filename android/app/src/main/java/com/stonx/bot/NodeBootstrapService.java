@@ -92,7 +92,12 @@ public class NodeBootstrapService extends Service {
                 File outFile = new File(targetRoot, relPath);
                 File parent = outFile.getParentFile();
                 if (parent != null) parent.mkdirs();
-                InputStream in = am.open(assetSubdir + "/" + relPath);
+                InputStream in;
+                try {
+                    in = am.open(assetSubdir + "/" + relPath);
+                } catch (IOException notFound) {
+                    continue;
+                }
                 try {
                     OutputStream out = new FileOutputStream(outFile);
                     try {
