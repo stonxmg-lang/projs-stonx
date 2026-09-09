@@ -44,6 +44,14 @@ jobs:
         run: |
           echo "y" | ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager --install "ndk;25.2.9519653" "cmake;3.22.1"
 
+      - name: Copy libc++_shared.so next to libnode.so (libnode depends on it at runtime)
+        run: |
+          NDK_DIR="${ANDROID_SDK_ROOT}/ndk/25.2.9519653"
+          LIBCXX=$(find "$NDK_DIR" -path "*aarch64-linux-android*" -name "libc++_shared.so" | head -1)
+          echo "Found libc++_shared.so at: $LIBCXX"
+          cp "$LIBCXX" android/app/libnode/bin/arm64-v8a/libc++_shared.so
+          ls -la android/app/libnode/bin/arm64-v8a/
+
       - name: Generate a signing key (self-signed, for sideloading)
         run: |
           keytool -genkeypair -v \
