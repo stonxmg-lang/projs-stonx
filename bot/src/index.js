@@ -1,5 +1,9 @@
 'use strict';
 
+if (typeof globalThis.crypto === 'undefined') {
+  globalThis.crypto = require('crypto').webcrypto;
+}
+
 const dependencyChecker = require('./utils/dependencyChecker');
 const logger = require('./utils/logger');
 const { Bot } = require('./core/bot');
