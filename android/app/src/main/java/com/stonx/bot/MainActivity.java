@@ -862,6 +862,28 @@ public class MainActivity extends Activity {
             sb.append(time).append("  ")
               .append(entry.optString("level", "").toUpperCase()).append("  ")
               .append(entry.optString("message", "")).append("\n");
+
+            // The bot logs a structured "meta" object alongside most error/warn
+            // lines (the real exception message, stack, etc.) — it was being
+            // sent by the API but silently dropped here, leaving only the
+            // generic top-level message visible (e.g. "Failed to post story"
+            // with no indication of why). Surface it so the log panel is
+            // actually useful for diagnosing a failure, not just noticing one.
+            JSONObject meta = entry.optJSONObject("meta");
+            if (meta != null && meta.length() > 0) {
+                sb.append("      ↳ ");
+                java.util.Iterator<String> keys = meta.keys();
+                boolean first = true;
+                while (keys.hasNext()) {
+                    String key = keys.next();
+                    if (!first) sb.append(" | ");
+                    first = false;
+                    String value = String.valueOf(meta.opt(key));
+                    if (value.length() > 300) value = value.substring(0, 300) + "…";
+                    sb.append(key).append('=').append(value);
+                }
+                sb.append("\n");
+            }
         }
         return sb.toString();
     }
