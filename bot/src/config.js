@@ -73,5 +73,5 @@ module.exports = {
     JOB_TIMEOUT_MS: 5 * 60 * 1000
   },
 
-  COMMAND_PREFIX: ''
+  COMMAND_PREFIX: '/'
 };

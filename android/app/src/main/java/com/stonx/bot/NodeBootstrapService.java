@@ -99,9 +99,24 @@ public class NodeBootstrapService extends Service {
             }
 
             if (!marker.exists() || !readMarker(marker).equals(expectedVersion)) {
-                deleteRecursive(projectDir);
+                // IMPORTANT: only wipe the directories we fully own as *code*
+                // (src/, node_modules/) plus package.json, then re-extract
+                // fresh copies from the bundled assets. We deliberately do
+                // NOT touch data/ (auth/database/logs), downloads/, temp/ or
+                // media/ here.
+                //
+                // Previously this called deleteRecursive(projectDir) — wiping
+                // the *entire* project directory, including data/auth/creds.json
+                // — on every single app update, which silently logged the bot
+                // out and forced re-pairing after installing a new build. The
+                // WhatsApp session has nothing to do with the app's own code
+                // and must survive an update exactly like any other app's
+                // data does.
+                deleteRecursive(new File(projectDir, "src"));
+                deleteRecursive(new File(projectDir, "node_modules"));
+                new File(projectDir, "package.json").delete();
                 extractFromManifest(PROJECT_DIR_NAME, PROJECT_DIR_NAME + "-filelist.txt", projectDir);
-                writeLog("extracted bot project");
+                writeLog("extracted bot project (session/data preserved across update)");
                 writeMarker(marker, expectedVersion);
             }
 
