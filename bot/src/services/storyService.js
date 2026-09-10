@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('fs');
 const logger = require('../utils/logger');
 
 // Confirmed against @innovatorssoft/baileys' published docs: this fork
@@ -39,30 +40,51 @@ async function postStory(sock, media, jidList) {
   // Same content shape as a normal sendMessage call — StatusHelper.send()
   // is documented to accept pre-built content, not just its own
   // StatusHelper.text() helper.
+  //
+  // Media is read into a real Buffer here rather than passed as
+  // `{ url: filePath }` (which is what a normal chat sendMessage(image/
+  // video/audio) call uses successfully elsewhere in this project — see
+  // song.js/stond.js). Status posting goes through a different upload path
+  // in this fork (StatusHelper), and unlike a normal message it does not
+  // appear to resolve a lazy `{ url }` reference the same way — text-only
+  // statuses (no file at all) worked fine while every file-based one
+  // failed, which is the signature of that specific mismatch rather than a
+  // generic upload/network problem.
   let content;
-  if (media.type === 'image') {
-    content = { image: { url: media.filePath }, caption: media.caption };
-  } else if (media.type === 'video') {
-    content = { video: { url: media.filePath }, caption: media.caption };
-  } else if (media.type === 'audio') {
-    // Voice-note-style status: no caption field, matching how a normal
-    // audio message works elsewhere in WhatsApp.
-    content = { audio: { url: media.filePath }, mimetype: 'audio/ogg; codecs=opus', ptt: true };
-  } else if (media.type === 'text') {
-    // Documented Baileys text-status shape: no file at all, just the text
-    // plus a background color rendered behind it.
-    content = { text: media.text, backgroundColor: media.backgroundColor || '#808080' };
-  } else {
-    const err = new Error('UNSUPPORTED_STORY_TYPE');
-    err.userMessage = '❌ نوع غير مدعوم للـStory.';
-    throw err;
+  try {
+    if (media.type === 'image') {
+      content = { image: await fs.promises.readFile(media.filePath), caption: media.caption };
+    } else if (media.type === 'video') {
+      content = { video: await fs.promises.readFile(media.filePath), caption: media.caption };
+    } else if (media.type === 'audio') {
+      // Voice-note-style status: no caption field, matching how a normal
+      // audio message works elsewhere in WhatsApp.
+      content = { audio: await fs.promises.readFile(media.filePath), mimetype: 'audio/ogg; codecs=opus', ptt: true };
+    } else if (media.type === 'text') {
+      // Documented Baileys text-status shape: no file at all, just the text
+      // plus a background color rendered behind it.
+      content = { text: media.text, backgroundColor: media.backgroundColor || '#808080' };
+    } else {
+      const err = new Error('UNSUPPORTED_STORY_TYPE');
+      err.userMessage = '❌ نوع غير مدعوم للـStory.';
+      throw err;
+    }
+  } catch (err) {
+    if (err.userMessage) throw err;
+    logger.error('Failed to read story media file', { error: err.message, filePath: media.filePath });
+    const wrapped = new Error('STORY_MEDIA_READ_FAILED');
+    wrapped.userMessage = '❌ تعذر قراءة ملف الوسائط المطلوب نشره.';
+    throw wrapped;
   }
 
   try {
     await StatusHelper.send(sock, content, jidList);
     logger.info('Story posted', { mediaType: media.type, targets: jidList.length });
   } catch (err) {
-    logger.error('Failed to post story', { error: err.message });
+    // Log the real reason (stack included) — the generic user-facing
+    // message alone was making every media failure look identical and
+    // impossible to tell apart without this.
+    logger.error('Failed to post story', { error: err.message, stack: err.stack, mediaType: media.type });
     const wrapped = new Error('STORY_SEND_FAILED');
     wrapped.userMessage = '❌ تعذر نشر الـStory.';
     throw wrapped;
@@ -93,26 +115,34 @@ async function postToChannel(bot, media, channelJid) {
   }
 
   let content;
-  if (media.type === 'image') {
-    content = { image: { url: media.filePath }, caption: media.caption };
-  } else if (media.type === 'video') {
-    content = { video: { url: media.filePath }, caption: media.caption };
-  } else if (media.type === 'audio') {
-    // A channel post, not a personal voice note — plain audio, not ptt.
-    content = { audio: { url: media.filePath }, mimetype: 'audio/ogg; codecs=opus', ptt: false };
-  } else if (media.type === 'text') {
-    content = { text: media.text };
-  } else {
-    const err = new Error('UNSUPPORTED_CHANNEL_POST_TYPE');
-    err.userMessage = '❌ نوع غير مدعوم للنشر على القناة.';
-    throw err;
+  try {
+    if (media.type === 'image') {
+      content = { image: await fs.promises.readFile(media.filePath), caption: media.caption };
+    } else if (media.type === 'video') {
+      content = { video: await fs.promises.readFile(media.filePath), caption: media.caption };
+    } else if (media.type === 'audio') {
+      // A channel post, not a personal voice note — plain audio, not ptt.
+      content = { audio: await fs.promises.readFile(media.filePath), mimetype: 'audio/ogg; codecs=opus', ptt: false };
+    } else if (media.type === 'text') {
+      content = { text: media.text };
+    } else {
+      const err = new Error('UNSUPPORTED_CHANNEL_POST_TYPE');
+      err.userMessage = '❌ نوع غير مدعوم للنشر على القناة.';
+      throw err;
+    }
+  } catch (err) {
+    if (err.userMessage) throw err;
+    logger.error('Failed to read channel post media file', { error: err.message, filePath: media.filePath });
+    const wrapped = new Error('CHANNEL_MEDIA_READ_FAILED');
+    wrapped.userMessage = '❌ تعذر قراءة ملف الوسائط المطلوب نشره.';
+    throw wrapped;
   }
 
   try {
     await bot.sendMessage(channelJid, content);
     logger.info('Channel post published', { mediaType: media.type, channelJid });
   } catch (err) {
-    logger.error('Failed to publish channel post', { error: err.message, channelJid });
+    logger.error('Failed to publish channel post', { error: err.message, stack: err.stack, channelJid });
     const wrapped = new Error('CHANNEL_POST_FAILED');
     wrapped.userMessage = '❌ تعذر النشر على القناة.';
     throw wrapped;

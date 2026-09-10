@@ -11,12 +11,16 @@ const { Bot } = require('./core/bot');
 async function main() {
   const depsOk = dependencyChecker.checkAll();
   if (!depsOk) {
-    // On the standalone Android APK build, external CLI tools like ffmpeg
-    // and yt-dlp aren't available (and nodejs-mobile can't spawn them
-    // anyway). We DON'T abort here — the bot still connects to WhatsApp and
-    // every command that doesn't rely on those tools works normally. Only
-    // the audio/video download features will be unavailable.
-    console.log('⚠️ بعض الأدوات الخارجية ناقصة — هيتم تشغيل البوت بدون ميزات التحميل/التحويل.');
+    // On the standalone Android APK build, the external CLI tools ffmpeg
+    // and yt-dlp aren't available (nodejs-mobile has no shell to spawn
+    // them from). We DON'T abort here — the bot still connects to
+    // WhatsApp, and download/audio features fall back to pure-JS engines
+    // (ffmpeg.wasm for audio/video encoding, @distube/ytdl-core for
+    // YouTube links specifically) instead of being disabled outright. The
+    // one real gap: yt-dlp's broad multi-platform support has no
+    // equivalent pure-JS replacement, so non-YouTube links still fail with
+    // a clear "unsupported platform" message on that build.
+    console.log('⚠️ بعض الأدوات الخارجية (ffmpeg/yt-dlp) ناقصة — هيتم استخدام البدائل الداخلية (ffmpeg.wasm + ytdl-core ليوتيوب فقط) بدل التعطيل الكامل.');
   }
 
   const bot = new Bot();

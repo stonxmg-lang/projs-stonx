@@ -7,6 +7,7 @@ const logger = require('../utils/logger');
 const { isValidHttpUrl } = require('../utils/validation');
 const { downloadFilePath, safeUnlink, fileSizeBytes } = require('../utils/files');
 const { sharedQueue } = require('./downloadQueue');
+const ytdlCoreSource = require('./ytdlCoreSource');
 
 /**
  * Downloads and extracts audio only from a URL.
@@ -17,7 +18,20 @@ function downloadAudio(url) {
   if (!isValidHttpUrl(url)) {
     return Promise.reject(new Error('INVALID_URL'));
   }
-  return sharedQueue.enqueue(() => runYtDlpAudio(url));
+  return sharedQueue.enqueue(() => runYtDlpAudio(url).catch((err) => {
+    if (isMissingYtDlpBinary(err) && ytdlCoreSource.isYoutubeUrl(url)) {
+      logger.info('yt-dlp binary unavailable — falling back to @distube/ytdl-core', { url });
+      return ytdlCoreSource.downloadAudio(url);
+    }
+    if (isMissingYtDlpBinary(err)) {
+      throw new Error('NO_DOWNLOADER_FOR_PLATFORM');
+    }
+    throw err;
+  }));
+}
+
+function isMissingYtDlpBinary(err) {
+  return !!err && /^YT_DLP_SPAWN_FAILED/.test(err.message || '');
 }
 
 function runYtDlpAudio(url) {

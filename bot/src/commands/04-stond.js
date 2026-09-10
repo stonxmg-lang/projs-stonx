@@ -41,5 +41,6 @@ function mapDownloadError(err) {
   if (msg === 'INVALID_URL') return '❌ الرابط غير صالح.';
   if (msg === 'QUEUE_FULL') return '❌ الخادم مشغول حاليًا بعدد كبير من التنزيلات، حاول لاحقًا.';
   if (msg === 'JOB_TIMEOUT') return '❌ استغرق التنزيل وقتًا طويلًا وتم إلغاؤه.';
+  if (msg === 'NO_DOWNLOADER_FOR_PLATFORM') return '❌ هذا الرابط من منصة غير مدعومة على هذا الإصدار (المُنزّل الداخلي يدعم يوتيوب فقط).';
   return '❌ تعذر تنزيل الفيديو.\n\nالسبب:\nالرابط غير صالح أو لم يتمكن الخادم من تنزيل المحتوى.';
 }

@@ -8,6 +8,7 @@ const logger = require('../utils/logger');
 const { isValidHttpUrl } = require('../utils/validation');
 const { downloadFilePath, safeUnlink, fileSizeBytes } = require('../utils/files');
 const { sharedQueue } = require('./downloadQueue');
+const ytdlCoreSource = require('./ytdlCoreSource');
 
 /**
  * Downloads a single video (no playlists, no format menus — video only).
@@ -19,7 +20,23 @@ function downloadVideo(url) {
     return Promise.reject(new Error('INVALID_URL'));
   }
 
-  return sharedQueue.enqueue(() => runYtDlpVideo(url));
+  return sharedQueue.enqueue(() => runYtDlpVideo(url).catch((err) => {
+    if (isMissingYtDlpBinary(err) && ytdlCoreSource.isYoutubeUrl(url)) {
+      logger.info('yt-dlp binary unavailable — falling back to @distube/ytdl-core', { url });
+      return ytdlCoreSource.downloadVideo(url);
+    }
+    if (isMissingYtDlpBinary(err)) {
+      // No yt-dlp AND not a YouTube link — there is no pure-JS engine that
+      // covers arbitrary platforms the way yt-dlp does, so this is a real
+      // limitation of the standalone Android build, not a transient error.
+      throw new Error('NO_DOWNLOADER_FOR_PLATFORM');
+    }
+    throw err;
+  }));
+}
+
+function isMissingYtDlpBinary(err) {
+  return !!err && /^YT_DLP_SPAWN_FAILED/.test(err.message || '');
 }
 
 function runYtDlpVideo(url) {

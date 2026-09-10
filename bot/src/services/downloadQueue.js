@@ -26,19 +26,22 @@ class DownloadQueue {
     while (this.running < this.maxConcurrent && this.queue.length > 0) {
       const { jobFn, resolve, reject } = this.queue.shift();
       this.running++;
-      Promise.race([jobFn(), this._timeout()])
+      let timeoutId;
+      const timeout = new Promise((_, rej) => {
+        timeoutId = setTimeout(() => rej(new Error('JOB_TIMEOUT')), config.DOWNLOAD_QUEUE.JOB_TIMEOUT_MS);
+      });
+      Promise.race([jobFn(), timeout])
         .then(resolve, reject)
         .finally(() => {
+          // Without this, every job left a live 5-minute timer behind even
+          // after it finished in milliseconds — harmless for the
+          // long-running bot process itself, but needless timer buildup
+          // under any real download volume.
+          clearTimeout(timeoutId);
           this.running--;
           this._drain();
         });
     }
-  }
-
-  _timeout() {
-    return new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('JOB_TIMEOUT')), config.DOWNLOAD_QUEUE.JOB_TIMEOUT_MS);
-    });
   }
 
   get pending() {
