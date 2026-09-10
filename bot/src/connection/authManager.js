@@ -4,6 +4,7 @@
 // keeps the same name/signature as upstream Baileys in this fork.
 const { useMultiFileAuthState } = require('@innovatorssoft/baileys');
 const fs = require('fs');
+const path = require('path');
 const config = require('../config');
 const logger = require('../utils/logger');
 
@@ -11,10 +12,23 @@ if (!fs.existsSync(config.AUTH_DIR)) {
   fs.mkdirSync(config.AUTH_DIR, { recursive: true });
 }
 
+/**
+ * A creds.json file exists as soon as a socket is created for the very
+ * first time (Baileys writes out the freshly-generated noise/identity keys
+ * on its first internal 'creds.update', well before any QR scan or pairing
+ * code is actually used) — so file *existence* alone does not mean a
+ * session is usable. Baileys only sets `registered: true` once pairing
+ * genuinely completes. Resuming a socket from an unregistered creds file
+ * is always rejected by WhatsApp, which used to send us straight back into
+ * a clear-session-and-reprompt loop (e.g. after a pairing code simply
+ * expired unused) — this is what made reconnects feel unstable.
+ */
 function hasExistingSession() {
   try {
-    const files = fs.readdirSync(config.AUTH_DIR);
-    return files.some((f) => f === 'creds.json');
+    const credsPath = path.join(config.AUTH_DIR, 'creds.json');
+    if (!fs.existsSync(credsPath)) return false;
+    const parsed = JSON.parse(fs.readFileSync(credsPath, 'utf-8'));
+    return !!(parsed && parsed.registered);
   } catch (_) {
     return false;
   }

@@ -26,15 +26,40 @@ public class NodeBootstrapService extends Service {
     private static final String PROJECT_DIR_NAME = "nodejs-project";
     private static volatile boolean nodeStarted = false;
 
+    /** Sent by MainActivity (or BootReceiver) to promote/demote this service
+     *  between a plain background service (no session yet — fine to die
+     *  with the app) and a real foreground service with a notification
+     *  (session linked — must keep running after the app closes). */
+    static final String ACTION_SET_FOREGROUND = "com.stonx.bot.action.SET_FOREGROUND";
+    static final String EXTRA_FOREGROUND = "foreground";
+
+    private boolean isForeground = false;
+
     @Override
     public void onCreate() {
         super.onCreate();
         createChannel();
-        startForeground(FOREGROUND_NOTIF_ID, buildNotification());
+        // Deliberately NOT calling startForeground() here. A brand-new
+        // launch (no session yet, or a reboot with no session — see
+        // BootReceiver) should stay a plain background service: no
+        // notification, nothing shown, free to be reclaimed by the OS once
+        // the app isn't in front. It only gets promoted to a foreground
+        // service once onStartCommand is told a session is actually active.
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        boolean wantForeground = intent != null && intent.getBooleanExtra(EXTRA_FOREGROUND, false);
+        boolean isSetForegroundCommand = intent != null && ACTION_SET_FOREGROUND.equals(intent.getAction());
+
+        if (wantForeground && !isForeground) {
+            isForeground = true;
+            startForeground(FOREGROUND_NOTIF_ID, buildNotification());
+        } else if (isSetForegroundCommand && !wantForeground && isForeground) {
+            isForeground = false;
+            stopForeground(true); // drop the notification, keep running in the background
+        }
+
         if (!nodeStarted) {
             nodeStarted = true;
             new Thread(new Runnable() {
@@ -42,6 +67,12 @@ public class NodeBootstrapService extends Service {
             }, "stonx-node-thread").start();
         }
         return START_STICKY;
+    }
+
+    @Override
+    public void onDestroy() {
+        isForeground = false;
+        super.onDestroy();
     }
 
     @Override

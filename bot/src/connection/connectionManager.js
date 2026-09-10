@@ -58,6 +58,10 @@ class ConnectionManager {
     this._authMethodChoice = null; // cached so reconnects don't re-prompt
     this._shuttingDown = false;
     this._paused = false;
+    // Bumped on every cancel/logout so an in-flight _connect() call (paused
+    // mid-await on method choice or phone number) can tell it has been
+    // superseded and bail out instead of racing a second socket into being.
+    this._connectGeneration = 0;
 
     // Values the local control API (src/api/server.js) reads and writes.
     this.latestQr = null;
@@ -65,6 +69,10 @@ class ConnectionManager {
     this._methodChoiceResolve = null;
     this._phoneNumberResolve = null;
     this._pendingPhoneNumber = null;
+    // Remembered across a pairing-code timeout/retry within the same
+    // linking attempt, so an expired code re-requests a fresh one
+    // automatically instead of forcing the user to retype the number.
+    this._lastPhoneNumber = null;
   }
 
   /** Called by the API when the app picks 'phone' or 'qr'. */
@@ -88,6 +96,7 @@ class ConnectionManager {
 
   /** Called by the API once the user submits a phone number from the app. */
   submitPhoneNumber(number) {
+    this._lastPhoneNumber = number;
     if (this._phoneNumberResolve) {
       const resolve = this._phoneNumberResolve;
       this._phoneNumberResolve = null;
@@ -103,6 +112,12 @@ class ConnectionManager {
       this._pendingPhoneNumber = null;
       return Promise.resolve(number);
     }
+    if (this._lastPhoneNumber) {
+      // Not a fresh linking attempt — we're here because the previous
+      // pairing code simply expired before it was used. Reuse the same
+      // number and request a new code instead of prompting again.
+      return Promise.resolve(this._lastPhoneNumber);
+    }
     this.state = config.CONNECTION_STATE.AWAITING_PHONE_NUMBER;
     events.emit('connection.state', this.state);
     return new Promise((resolve) => {
@@ -113,12 +128,48 @@ class ConnectionManager {
   /** Called by the API's "delete session / stop" button. */
   async requestLogout() {
     logger.info('Logout requested via local API');
+    this._connectGeneration++;
     this._unbindSocket(this.sock);
+    this.sock = null;
     authManager.clearSession();
     this._authMethodChoice = null;
+    this._pendingPhoneNumber = null;
+    this._phoneNumberResolve = null;
+    this._methodChoiceResolve = null;
+    this._lastPhoneNumber = null;
     this.latestQr = null;
     this.latestPairingCode = null;
     this.state = config.CONNECTION_STATE.LOGGED_OUT;
+    events.emit('connection.state', this.state);
+    if (!this._shuttingDown) await this._connect();
+  }
+
+  /**
+   * Called by the API's "back" button on the phone/QR/pairing-code screens.
+   * Only valid before a session exists — lets the user cancel out of one
+   * linking method and pick the other again, instead of being stuck once
+   * a method is chosen. Tears down whatever socket/wait is currently in
+   * flight (there is nothing to lose — no session has been created yet)
+   * and restarts the auth flow from the method-choice screen.
+   */
+  async cancelToMethodChoice() {
+    if (authManager.hasExistingSession()) {
+      // Nothing to cancel — a real session already exists, this isn't the
+      // pre-link flow. Ignore rather than tearing down a live connection.
+      return;
+    }
+    logger.info('Auth method cancelled by user — returning to method choice');
+    this._connectGeneration++; // invalidates any _connect() awaiting a choice/number
+    this._unbindSocket(this.sock);
+    this.sock = null;
+    this._authMethodChoice = null;
+    this._pendingPhoneNumber = null;
+    this._phoneNumberResolve = null;
+    this._methodChoiceResolve = null;
+    this._lastPhoneNumber = null;
+    this.latestQr = null;
+    this.latestPairingCode = null;
+    this.state = config.CONNECTION_STATE.AWAITING_METHOD_CHOICE;
     events.emit('connection.state', this.state);
     if (!this._shuttingDown) await this._connect();
   }
@@ -182,6 +233,7 @@ class ConnectionManager {
   }
 
   async _connect() {
+    const myGen = ++this._connectGeneration;
     this.state = config.CONNECTION_STATE.CONNECTING;
 
     const { state, saveCreds } = await authManager.loadAuthState();
@@ -198,6 +250,12 @@ class ConnectionManager {
       if (!this._authMethodChoice) {
         logger.info('Waiting for auth method choice from app (phone or qr)');
         this._authMethodChoice = await this._waitForAuthMethodChoice();
+        // The wait above resolves either because the user picked a method,
+        // or because cancelToMethodChoice()/requestLogout() bumped the
+        // generation while we were asleep — in the latter case a newer
+        // _connect() is already running (or about to), so this one must
+        // not proceed and create a second, orphaned socket.
+        if (myGen !== this._connectGeneration) return;
       }
     } else {
       console.log('🔐 Existing session detected');
@@ -232,6 +290,13 @@ class ConnectionManager {
       shouldSyncHistoryMessage: ({ syncType }) => syncType !== 2
     });
 
+    if (myGen !== this._connectGeneration) {
+      // Cancelled while fetching the version / building the socket options —
+      // discard this socket rather than binding a second live one.
+      try { sock.end?.(undefined); } catch (_) { /* already gone */ }
+      return;
+    }
+
     this._bindSocket(sock);
     this.sock = sock;
 
@@ -239,6 +304,7 @@ class ConnectionManager {
       // Wait for the app to submit the phone number via POST /api/phone,
       // then request the pairing code and hand it back through the API.
       const phoneNumber = await this._waitForPhoneNumber();
+      if (myGen !== this._connectGeneration) return; // cancelled while waiting
       this.state = config.CONNECTION_STATE.CONNECTING;
       events.emit('connection.state', this.state);
       try {
@@ -320,6 +386,9 @@ class ConnectionManager {
         this._unbindSocket(this.sock);
         authManager.clearSession();
         this._authMethodChoice = null;
+        this._pendingPhoneNumber = null;
+        this._phoneNumberResolve = null;
+        this._lastPhoneNumber = null;
         this.latestQr = null;
         this.latestPairingCode = null;
         if (!this._shuttingDown) await this._connect();

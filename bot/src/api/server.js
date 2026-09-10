@@ -91,6 +91,11 @@ function startApiServer(connectionManager) {
         return res.end(png);
       }
 
+      if (req.method === 'POST' && pathname === '/api/back') {
+        await connectionManager.cancelToMethodChoice();
+        return sendJson(res, 200, { ok: true });
+      }
+
       if (req.method === 'POST' && pathname === '/api/logout') {
         await connectionManager.requestLogout();
         return sendJson(res, 200, { ok: true });

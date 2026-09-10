@@ -76,6 +76,12 @@ public class MainActivity extends Activity {
     private String lastNotifiedState = "";
     private String pendingCountryCode = "968";
 
+    // Whether the last state we saw from the bot counts as an actual linked
+    // session (CONNECTED or PAUSED-with-session) vs. no session at all
+    // (logged out / still on the method-choice, phone, QR or pairing-code
+    // screens). Drives whether the background service is allowed to persist.
+    private boolean sessionActive = false;
+
     // When true, user is at the bottom of the log so we keep autoscrolling;
     // once they scroll up we stop yanking it back down (fixes the "jumpy" log).
     private boolean logStickToBottom = true;
@@ -93,16 +99,50 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         handler.removeCallbacks(pollLoop);
+        // If there's no linked session, there's nothing worth keeping alive
+        // in the background — the app should fully sleep (no process, no
+        // notification, nothing) until reopened.
+        //
+        // Note on why this kills the whole process: node runs in-process via
+        // JNI (node::Start blocks a native thread for as long as the process
+        // lives — see NodeBridge/nodebridge.cpp), and nodejs-mobile doesn't
+        // expose a way to stop it from Java short of that. Stopping the
+        // Service alone unregisters the component but does not stop that
+        // native thread, so it would keep running invisibly. Killing the
+        // process is the only way to guarantee it actually stops — which is
+        // fine here since there's no session to preserve; next launch starts
+        // clean. If a session IS active, we skip this entirely and leave the
+        // process/service running: it keeps itself in the foreground and
+        // BootReceiver will revive it after a reboot.
+        // isChangingConfigurations() guards against killing the process on a
+        // simple rotation/config-change recreation, which also calls
+        // onDestroy() but isn't the user actually leaving the app.
+        if (!sessionActive && !isChangingConfigurations()) {
+            stopService(new Intent(this, NodeBootstrapService.class));
+            android.os.Process.killProcess(android.os.Process.myPid());
+        }
         super.onDestroy();
     }
 
+    /** First launch of the service: a plain (non-foreground) start is fine
+     *  here because the activity itself is in the foreground while doing it.
+     *  The service promotes/demotes itself to a real foreground service (with
+     *  notification) only once we know whether a session is actually linked —
+     *  see updateServiceForegroundState(), driven by the poll loop below. */
     private void startNodeService() {
-        Intent serviceIntent = new Intent(this, NodeBootstrapService.class);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(serviceIntent);
-        } else {
-            startService(serviceIntent);
-        }
+        startService(new Intent(this, NodeBootstrapService.class));
+    }
+
+    /** Tells the service whether to run as a persistent foreground service
+     *  (session linked — must survive the app closing) or a plain background
+     *  one (no session yet — fine to die once the app isn't in front). */
+    private void updateServiceForegroundState(boolean active) {
+        if (active == sessionActive) return;
+        sessionActive = active;
+        Intent intent = new Intent(this, NodeBootstrapService.class);
+        intent.setAction(NodeBootstrapService.ACTION_SET_FOREGROUND);
+        intent.putExtra(NodeBootstrapService.EXTRA_FOREGROUND, active);
+        startService(intent);
     }
 
     @Override
@@ -302,7 +342,15 @@ public class MainActivity extends Activity {
         logText.setTextSize(11);
         logText.setTypeface(Typeface.MONOSPACE);
         logText.setLineSpacing(dp(2), 1f);
-        logText.setTextIsSelectable(true);
+        // NOT selectable: a selectable TextView is implicitly focusable, and
+        // this view's text is replaced every ~2s by the poll loop. Whenever
+        // that refresh landed while the phone-number field had focus and the
+        // keyboard was open, Android would occasionally hand focus to this
+        // TextView instead, closing the keyboard after a single keystroke.
+        // The dedicated "نسخ" button above already covers copying the log,
+        // so selection here isn't needed.
+        logText.setTextIsSelectable(false);
+        logText.setFocusable(false);
         logScroll.addView(logText);
         panel.addView(logScroll, scrollLp);
 
@@ -347,6 +395,33 @@ public class MainActivity extends Activity {
         b.setBackground(bg);
         b.setPadding(dp(18), dp(15), dp(18), dp(15));
         return b;
+    }
+
+    /** Small text-style "back" affordance so the user can back out of a
+     *  linking method (phone/QR/pairing-code) and pick the other one,
+     *  instead of being stuck once they've chosen. */
+    private View backButton() {
+        TextView back = new TextView(this);
+        back.setText("‹  رجوع لاختيار طريقة أخرى");
+        back.setTextColor(C_TEXT_DIM);
+        back.setTextSize(12);
+        back.setPadding(dp(4), dp(8), dp(4), dp(8));
+        back.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                currentScreenKind = "";
+                showLoadingScreen();
+                runOffThread(new Runnable() {
+                    @Override public void run() {
+                        try {
+                            ApiClient.postJson("/api/back", new JSONObject());
+                        } catch (Exception e) {
+                            showToast("تعذر الرجوع: " + e.getMessage());
+                        }
+                    }
+                });
+            }
+        });
+        return back;
     }
 
     private TextView screenLabel(String text) {
@@ -423,30 +498,65 @@ public class MainActivity extends Activity {
         box.setOrientation(LinearLayout.VERTICAL);
         box.addView(screenLabel("أدخل رقم الهاتف"));
 
-        // Single combined field: country code + a hidden gap + number.
-        final EditText phoneField = new EditText(this);
-        phoneField.setHint("968 · رقم الهاتف بدون صفر");
-        phoneField.setHintTextColor(C_TEXT_DIM);
-        phoneField.setTextColor(C_TEXT);
-        phoneField.setTextSize(16);
-        phoneField.setInputType(InputType.TYPE_CLASS_PHONE);
-        phoneField.setText(pendingCountryCode + "  ");
-        phoneField.setSelection(phoneField.getText().length());
+        // Two separate fields (country code / number) laid out side by side —
+        // a single "code + number" text field looked unpolished and made it
+        // easy to accidentally delete the code while typing the number.
+        LinearLayout fieldRow = new LinearLayout(this);
+        fieldRow.setOrientation(LinearLayout.HORIZONTAL);
+        fieldRow.setGravity(Gravity.CENTER_VERTICAL);
+
+        final EditText codeField = new EditText(this);
+        codeField.setText(pendingCountryCode);
+        codeField.setTextColor(C_TEXT);
+        codeField.setTextSize(16);
+        codeField.setTypeface(Typeface.DEFAULT_BOLD);
+        codeField.setGravity(Gravity.CENTER);
+        codeField.setInputType(InputType.TYPE_CLASS_PHONE);
+        codeField.setImeOptions(EditorInfo.IME_FLAG_NO_EXTRACT_UI | EditorInfo.IME_ACTION_NEXT);
+        codeField.setHint("968");
+        codeField.setHintTextColor(C_TEXT_DIM);
+        GradientDrawable codeFieldBg = new GradientDrawable();
+        codeFieldBg.setColor(C_FIELD_BG);
+        codeFieldBg.setCornerRadius(dp(12));
+        codeFieldBg.setStroke(dp(1), C_CARD_LINE);
+        codeField.setBackground(codeFieldBg);
+        codeField.setPadding(dp(4), dp(14), dp(4), dp(14));
+        LinearLayout.LayoutParams codeLp = new LinearLayout.LayoutParams(dp(64), ViewGroup.LayoutParams.WRAP_CONTENT);
+        fieldRow.addView(codeField, codeLp);
+
+        TextView plus = new TextView(this);
+        plus.setText("—");
+        plus.setTextColor(C_TEXT_DIM);
+        plus.setTextSize(16);
+        plus.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams plusLp = new LinearLayout.LayoutParams(dp(20), ViewGroup.LayoutParams.WRAP_CONTENT);
+        fieldRow.addView(plus, plusLp);
+
+        final EditText numberField = new EditText(this);
+        numberField.setHint("رقم الهاتف بدون صفر في البداية");
+        numberField.setHintTextColor(C_TEXT_DIM);
+        numberField.setTextColor(C_TEXT);
+        numberField.setTextSize(16);
+        numberField.setInputType(InputType.TYPE_CLASS_PHONE);
         // Keep the keyboard from closing after each digit.
-        phoneField.setImeOptions(EditorInfo.IME_FLAG_NO_EXTRACT_UI | EditorInfo.IME_ACTION_DONE);
-        GradientDrawable fbg = new GradientDrawable();
-        fbg.setColor(C_FIELD_BG);
-        fbg.setCornerRadius(dp(12));
-        fbg.setStroke(dp(1), C_CARD_LINE);
-        phoneField.setBackground(fbg);
-        phoneField.setPadding(dp(14), dp(14), dp(14), dp(14));
-        LinearLayout.LayoutParams fieldLp = new LinearLayout.LayoutParams(
+        numberField.setImeOptions(EditorInfo.IME_FLAG_NO_EXTRACT_UI | EditorInfo.IME_ACTION_DONE);
+        GradientDrawable numberFieldBg = new GradientDrawable();
+        numberFieldBg.setColor(C_FIELD_BG);
+        numberFieldBg.setCornerRadius(dp(12));
+        numberFieldBg.setStroke(dp(1), C_CARD_LINE);
+        numberField.setBackground(numberFieldBg);
+        numberField.setPadding(dp(14), dp(14), dp(14), dp(14));
+        LinearLayout.LayoutParams numberLp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        fieldRow.addView(numberField, numberLp);
+
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        fieldLp.topMargin = dp(16);
-        box.addView(phoneField, fieldLp);
+        rowLp.topMargin = dp(16);
+        box.addView(fieldRow, rowLp);
+        numberField.requestFocus();
 
         TextView hint = new TextView(this);
-        hint.setText("مثال: 96877274542  (رمز الدولة ثم الرقم)");
+        hint.setText("مثال: 968 · 77274542  (رمز الدولة ثم الرقم)");
         hint.setTextColor(C_TEXT_DIM);
         hint.setTextSize(11);
         LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(
@@ -460,8 +570,11 @@ public class MainActivity extends Activity {
         btnLp.topMargin = dp(16);
         connectBtn.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
-                final String digits = phoneField.getText().toString().replaceAll("[^0-9]", "");
-                if (digits.length() < 8) {
+                final String code = codeField.getText().toString().replaceAll("[^0-9]", "");
+                final String rest = numberField.getText().toString().replaceAll("[^0-9]", "");
+                pendingCountryCode = code.isEmpty() ? pendingCountryCode : code;
+                final String digits = code + rest;
+                if (code.isEmpty() || rest.length() < 6) {
                     showToast("رقم غير صالح");
                     return;
                 }
@@ -480,6 +593,12 @@ public class MainActivity extends Activity {
             }
         });
         box.addView(connectBtn, btnLp);
+
+        LinearLayout.LayoutParams backLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        backLp.topMargin = dp(6);
+        backLp.gravity = Gravity.CENTER_HORIZONTAL;
+        box.addView(backButton(), backLp);
 
         setScreen("phone_input", box);
     }
@@ -537,6 +656,13 @@ public class MainActivity extends Activity {
         codeRow.addView(copyIcon, copyLp);
 
         box.addView(codeRow, codeRowLp);
+
+        LinearLayout.LayoutParams backLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        backLp.topMargin = dp(16);
+        backLp.gravity = Gravity.CENTER_HORIZONTAL;
+        box.addView(backButton(), backLp);
+
         setScreen("phone_code:" + code, box);
     }
 
@@ -563,6 +689,13 @@ public class MainActivity extends Activity {
         qrFrame.addView(qrImgView);
 
         box.addView(qrFrame, qrFrameLp);
+
+        LinearLayout.LayoutParams backLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        backLp.topMargin = dp(14);
+        backLp.gravity = Gravity.CENTER_HORIZONTAL;
+        box.addView(backButton(), backLp);
+
         setScreen("qr", box);
         loadQrImage(qrImgView);
     }
@@ -734,6 +867,7 @@ public class MainActivity extends Activity {
     }
 
     private void applyState(String state, String ownJid, String pairingCode) {
+        updateServiceForegroundState("PAUSED".equals(state) || "CONNECTED".equals(state));
         switch (state) {
             case "AWAITING_METHOD_CHOICE":
             case "LOGGED_OUT":

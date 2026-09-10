@@ -15,6 +15,7 @@ const voiceService = require('../services/voiceService');
 const targetResolver = require('../services/targetResolver');
 const whatsappMedia = require('../services/whatsappMedia');
 const settingsRepo = require('../database/settings');
+const { buildOnlineStatusCard } = require('../services/statusCard');
 
 class Bot {
   constructor() {
@@ -82,9 +83,12 @@ class Bot {
     });
 
     events.on('connection.state', (state) => {
-      if (state === 'CONNECTED' && !this._startedAt) {
-        this._startedAt = Date.now();
-        this._ensureOwnerBootstrap();
+      if (state === 'CONNECTED') {
+        if (!this._startedAt) {
+          this._startedAt = Date.now();
+          this._ensureOwnerBootstrap();
+        }
+        this._sendOnlineStatusCard();
       }
     });
 
@@ -108,6 +112,22 @@ class Bot {
     }
     logger.info('Bootstrapped bot owner from own linked account', { ownJids });
     console.log(`\n👑 تم تعيين حسابك كمالك افتراضي للبوت (أول تشغيل، لا يوجد مالك مسجل): ${ownJids.join(', ')}\n`);
+  }
+
+  /**
+   * Sends the "online" status card to the bot's own chat (Message Yourself)
+   * every time a connection completes — right after a fresh pairing, and
+   * again on every later reconnect — as a clear, timestamped signal the
+   * bot is actually up.
+   */
+  async _sendOnlineStatusCard() {
+    const jid = this.ownJid;
+    if (!jid) return;
+    try {
+      await this.sendText(jid, buildOnlineStatusCard());
+    } catch (err) {
+      logger.warn('Failed to send online-status card to self', { error: err.message });
+    }
   }
 
   _registerGracefulShutdown() {
